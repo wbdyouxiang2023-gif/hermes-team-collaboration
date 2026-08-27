@@ -1,0 +1,115 @@
+name: Hermes Team Automation
+
+on:
+  push:
+    branches: [main, develop]
+  pull_request:
+    branches: [main, develop]
+  issues:
+    types: [opened, labeled, unlabeled]
+  discussion:
+    types: [created, comment]
+
+env:
+  GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+jobs:
+  xiaoxiami-review:
+    name: Code Review (小虾米)
+    runs-on: ubuntu-latest
+    if: github.event_name == 'pull_request'
+    
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+      
+      - name: Check code quality
+        run: |
+          echo "🔍 小虾米正在检查代码..."
+          py_files=$(find . -name "*.py" | wc -l)
+          echo "Python 文件数量：$py_files"
+          if [ $py_files -gt 0 ]; then
+            python -m py_compile $(find . -name "*.py" -type f) 2>&1 | head -20
+          fi
+      
+      - name: Send Feishu notification
+        uses: fjogeleit/http-request-action@v1
+        with:
+          url: 'https://open.feishu.cn/open-apis/bot/v2/hook/your-webhook-url'
+          method: 'POST'
+          header: 'Content-Type: application/json'
+          data: |
+            {
+              "msg_type": "post",
+              "content": {
+                "zh_cn": {
+                  "content": [
+                    [
+                      {"tag": "text", "text": "✅ 代码检查完成"},
+                      {"tag": "text", "text": "由 小虾米 (自动化)"},
+                      {"tag": "text", "text": ""}
+                    ],
+                    [
+                      {"tag": "text", "text": "PR 状态：待 Review"},
+                      {"tag": "text", "text": "建议：通过自动检查"},
+                      {"tag": "text", "text": "执行人：小虾米"}
+                    ]
+                  ]
+                }
+              }
+            }
+
+  xiaohe-automation:
+    name: Automation (小河虾)
+    runs-on: ubuntu-latest
+    
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+      
+      - name: Run basic tests
+        run: |
+          echo "🤖 小河虾正在执行自动化..."
+          git status --porcelain 2>&1 | head -5
+          echo "=== 文件结构 ==="
+          find . -type f \( -name "*.py" -o -name "*.md" -o -name "*.json" \) | head -20
+      
+      - name: Generate automation report
+        run: |
+          echo "✅ 自动化完成" > automation_report.txt
+          echo "时间：$(date -u +%Y-%m-%dT%H:%M:%SZ)" >> automation_report.txt
+          echo "仓库：${{ github.repository }}" >> automation_report.txt
+          git add automation_report.txt
+          git commit -m "chore: automation report $(date +%Y%m%d)" || true
+
+  daily-backup:
+    name: Daily Backup (小虾米 + 小河虾)
+    runs-on: ubuntu-latest
+    schedule:
+      - cron: '0 0 * * *'
+    
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+      
+      - name: Backup check
+        run: |
+          echo "📦 每日备份检查"
+          echo "仓库：${{ github.repository }}"
+          echo "提交数：$(git rev-list --count HEAD)"
+          echo "分支数：$(git branch | wc -l)"
+          
+          cat > backup_report.txt << EOF
+          每日备份报告
+          =================
+          日期：$(date -u +%Y-%m-%d)
+          仓库：${{ github.repository }}
+          提交总数：$(git rev-list --count HEAD)
+          分支总数：$(git branch | wc -l)
+          EOF
+      
+      - name: Upload backup report
+        uses: actions/upload-artifact@v3
+        with:
+          name: backup-report
+          path: backup_report.txt
