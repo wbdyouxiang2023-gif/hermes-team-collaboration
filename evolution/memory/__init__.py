@@ -8,8 +8,6 @@ Public API:
 """
 
 from evolution.memory.episodic import EpisodicMemory, ExperienceRecord
-from evolution.memory.semantic import SemanticMemory
-from evolution.memory.retriever import MemoryRetriever, MemoryResult
 from evolution.memory.intelligence import (
     MemoryIntelligence,
     MemoryDecision,
@@ -17,6 +15,15 @@ from evolution.memory.intelligence import (
     MemoryStatus,
 )
 from evolution.memory.memory_activation import activate_memories
+
+# Lazy imports (require numpy / sentence-transformers)
+try:
+    from evolution.memory.semantic import SemanticMemory
+    from evolution.memory.retriever import MemoryRetriever, MemoryResult
+except ImportError:
+    SemanticMemory = None  # type: ignore[assignment,misc]
+    MemoryRetriever = None  # type: ignore[assignment,misc]
+    MemoryResult = None  # type: ignore[assignment,misc]
 
 __all__ = [
     "EpisodicMemory",
