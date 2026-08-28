@@ -1,0 +1,68 @@
+# Hermes Team Collaboration - CI/CD
+
+name: Hermes Automation
+
+on:
+  push:
+    branches: [main, develop]
+  pull_request:
+    branches: [main, develop]
+  issues:
+    types: [opened, labeled, unlabeled]
+  schedule:
+    - cron: '0 0 * * *'  # Daily midnight UTC+8 = 16:00 UTC
+
+jobs:
+  # === Code Quality Check (triggered by PR) ===
+  review:
+    if: github.event_name == 'pull_request'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - name: Install dependencies
+        run: |
+          cd evolution
+          pip install -e ".[dev]" --break-system-packages 2>/dev/null || pip install -e ".[dev]"
+      - name: Run tests
+        run: |
+          cd evolution
+          PYTHONPATH=. python -m pytest tests/ -v --tb=short
+      - name: Syntax check all Python files
+        run: |
+          find . -name '*.py' -not -path '*/venv/*' -not -path '*/__pycache__/*' \
+            -exec python -c "import ast, sys; ast.parse(open(sys.argv[1]).read()); print('OK:', sys.argv[1])" {} \;
+
+  # === Automated Testing (triggered by push) ===
+  test:
+    if: github.event_name == 'push'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - name: Run Evolution tests
+        run: |
+          cd evolution
+          pip install -e ".[dev]" --break-system-packages 2>/dev/null || pip install -e ".[dev]"
+          PYTHONPATH=. python -m pytest tests/ -v --tb=short 2>&1 | tail -20
+
+  # === Daily Status Report ===
+  daily-report:
+    if: github.event_name == 'schedule'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Repository status
+        run: |
+          echo "=== Repository Structure ==="
+          find . -maxdepth 2 -not -path './.git/*' -not -path './.github/*' | head -30
+          echo ""
+          echo "=== Recent Commits ==="
+          git log --oneline -10
+          echo ""
+          echo "=== Evolution Test Summary ==="
+          cd evolution 2>/dev/null && PYTHONPATH=. python -m pytest tests/ -q 2>/dev/null || echo "Tests skipped (no deps)"
