@@ -1,10 +1,15 @@
 #!/usr/bin/env python3
 """WebPhone - Virtual phone in browser with built-in web proxy."""
-import os, sys, re, json, time, threading
+import os, sys, re, json, time, threading, traceback
 from urllib.parse import urljoin, urlparse, quote, unquote, parse_qs
 from http.server import HTTPServer, BaseHTTPRequestHandler
 import urllib.request
 import ssl
+
+if hasattr(sys.stdout, 'buffer'):
+    sys.stdout.reconfigure(errors='surrogateescape')
+if hasattr(sys.stderr, 'buffer'):
+    sys.stderr.reconfigure(errors='surrogateescape')
 
 PORT = 9000
 PROXY_PREFIX = "wp?url="
@@ -267,66 +272,60 @@ def proxy_fetch(url):
         except: data = b''
         return data, ct, e.code
     except Exception as e:
-        return str(e).encode(), 'text/plain', 502
+        return ('Error: ' + repr(e)).encode('ascii', errors='replace'), 'text/plain', 502
 
 class PhoneHandler(BaseHTTPRequestHandler):
     def log_message(self, fmt, *args): pass
-    def do_GET(self):
-        parsed = urlparse(self.path)
-        qs = parse_qs(parsed.query)
-        if parsed.path == '/' or parsed.path.endswith('/'):
-            data = PHONE_HTML.encode('utf-8')
-            self.send_response(200)
-            self.send_header('Content-Type', 'text/html; charset=utf-8')
-            self.send_header('Content-Length', str(len(data)))
-            self.end_headers()
+    def _safe_send(self, code, data, ct):
+        try:
+            self.wfile.write(b'HTTP/1.1 ' + str(code).encode('ascii') + b' OK\r\n')
+            self.wfile.write(b'Content-Type: ' + ct.encode('latin-1', errors='replace') + b'\r\n')
+            self.wfile.write(b'Content-Length: ' + str(len(data)).encode('ascii') + b'\r\n')
+            self.wfile.write(b'Access-Control-Allow-Origin: *\r\n')
+            self.wfile.write(b'\r\n')
+            if isinstance(data, str): data = data.encode('utf-8', errors='replace')
             self.wfile.write(data)
-        elif parsed.path.endswith('/wp') or parsed.path == '/wp':
-            url = qs.get('url', [''])[0]
-            if not url:
-                self._resp(400, b'Missing url', 'text/plain'); return
-            url = unquote(url)
-            data, ct, code = proxy_fetch(url)
-            if 'text/html' in ct and code == 200:
-                try:
-                    text = data.decode('utf-8', errors='replace')
-                    text = rewrite_urls(text, url)
-                    data = text.encode('utf-8', errors='replace')
-                except: pass
-            self._resp(code, data, ct)
-        else:
-            self._resp(404, b'Not Found', 'text/plain')
-    def do_POST(self):
+        except Exception: pass
+    def _do_proxy(self):
         parsed = urlparse(self.path)
         qs = parse_qs(parsed.query)
-        if parsed.path.endswith('/wp') or parsed.path == '/wp':
-            url = qs.get('url', [''])[0]
-            if not url:
-                self._resp(400, b'Missing url', 'text/plain'); return
-            url = unquote(url)
-            data, ct, code = proxy_fetch(url)
-            if 'text/html' in ct and code == 200:
-                try:
-                    text = data.decode('utf-8', errors='replace')
-                    text = rewrite_urls(text, url)
-                    data = text.encode('utf-8', errors='replace')
-                except: pass
-            self._resp(code, data, ct)
-        else:
-            self._resp(404, b'Not Found', 'text/plain')
-    def _resp(self, code, data, ct):
-        self.send_response(code)
-        self.send_header('Content-Type', ct)
-        self.send_header('Content-Length', str(len(data)))
-        self.send_header('Access-Control-Allow-Origin', '*')
-        self.end_headers()
-        self.wfile.write(data)
+        url = qs.get('url', [''])[0]
+        if not url:
+            self._safe_send(400, b'Missing url', 'text/plain'); return
+        url = unquote(url)
+        data, ct, code = proxy_fetch(url)
+        if 'text/html' in ct and code == 200:
+            try:
+                text = data.decode('utf-8', errors='replace')
+                text = rewrite_urls(text, url)
+                data = text.encode('utf-8', errors='replace')
+            except Exception: pass
+        self._safe_send(code, data, ct)
+    def do_GET(self):
+        try:
+            parsed = urlparse(self.path)
+            if parsed.path == '/' or parsed.path.endswith('/'):
+                data = PHONE_HTML.encode('utf-8')
+                self._safe_send(200, data, 'text/html; charset=utf-8')
+            elif parsed.path.endswith('/wp') or parsed.path == '/wp':
+                self._do_proxy()
+            else:
+                self._safe_send(404, b'Not Found', 'text/plain')
+        except Exception:
+            try: self._safe_send(500, b'Error', 'text/plain')
+            except: pass
+    def do_POST(self):
+        try:
+            parsed = urlparse(self.path)
+            if parsed.path.endswith('/wp') or parsed.path == '/wp':
+                self._do_proxy()
+            else:
+                self._safe_send(404, b'Not Found', 'text/plain')
+        except Exception:
+            try: self._safe_send(500, b'Error', 'text/plain')
+            except: pass
     def do_OPTIONS(self):
-        self.send_response(204)
-        self.send_header('Access-Control-Allow-Origin', '*')
-        self.send_header('Access-Control-Allow-Methods', 'GET, POST, OPTIONS')
-        self.send_header('Access-Control-Allow-Headers', '*')
-        self.end_headers()
+        self._safe_send(204, b'', 'text/plain')
 
 class ReuseHTTPServer(HTTPServer):
     allow_reuse_address = True
